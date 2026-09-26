@@ -1,0 +1,9 @@
+# For this repository's own builds — its tests, its criterion benchmark, and the
+# example. A consumer is not affected: cargo ignores a dependency's toolchain
+# file.
+#
+# It is the same compiler the sibling `bite-gpui/gpui_parley` and
+# `bite-gpui/gpui_morphorm` repositories pin, so the three crates of this family
+# are built and measured by one toolchain and their numbers are comparable.
+[toolchain]
+channel = "1.98.1"

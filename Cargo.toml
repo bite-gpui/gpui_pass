@@ -1,0 +1,103 @@
+# `gpui_pass`, in its own repository.
+#
+# The third swap: a `FramePipeline`, written outside the tree, behind
+# `gpui_authoring`'s eleven-method trait. Like `gpui_parley` and `gpui_morphorm`
+# it is a second implementation of a seam the facade swaps, so it is meant to be
+# depended on rather than shipped inside the distribution — and it publishes from
+# a repository of its own, by tag.
+#
+# It does the two things a pipeline is actually in a position to do, off one
+# clock: it *decides* whether an ask spends itself on the frame's work (a
+# throttle, by a rate policy read per frame), and it *accounts* for what it
+# decided and what the passes cost (a ledger). Both are measured against the same
+# injected clock, which is what makes the whole thing reproducible — and what
+# lets CI assert a frame budget, where a telemetry swap that needs an external
+# profiler's GUI cannot be exercised there at all.
+#
+# The name continues the distribution's own family. `docs/contract.md` §5 in
+# `bite-gpui/distribution` maps `gpui_X` to `bite-gp-X`, which is the rule that
+# took `gpui_parley` to `bite-gp-parley` and `gpui_morphorm` to
+# `bite-gp-morphorm`; applied to this crate that is `bite-gp-pass`. The version is
+# the same scheme's slot — `major.minor.(patch * 100 + amendment)` at upstream
+# 1.21, so `1.21.1` is `bite-gp-parley`, `1.21.2` is `bite-gp-morphorm`, and this
+# crate takes `1.21.3`.
+#
+# `package.name` and `[lib] name` differ, which is invariant 2 of the
+# distribution: the package identifier carries the namespace, the library target
+# keeps the name the code uses, and `use gpui_pass::…` in a consumer is unaffected
+# by either.
+[package]
+name = "bite-gp-pass"
+version = "1.21.3"
+edition = "2024"
+license = "Apache-2.0"
+description = "A throttling, self-accounting FramePipeline for GPUI"
+repository = "https://github.com/bite-gpui/gpui_pass"
+readme = "README.md"
+keywords = ["gui", "frame-rate", "throttling", "profiling"]
+categories = ["gui"]
+
+# Its own workspace root, so the crate stands alone: no path to a checkout, and
+# `cargo test` here does not need one.
+[workspace]
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[lib]
+# Not derived from the package name, and it must not be: `bite-gp-pass` would
+# export `bite_gp_pass` while every file here — and every consumer — says
+# `use gpui_pass::…`. Invariant 2, applied to a crate that lives outside the
+# distribution.
+name = "gpui_pass"
+path = "src/gpui_pass.rs"
+
+[dependencies]
+# lib name `gpui_authoring` — the trait this crate implements, and the
+# `WindowMetrics` a frame is throttled against. This is the whole surface the
+# pipeline needs; it names no window, no platform and no renderer.
+gpui_authoring = { version = "1.21", package = "bite-gp-authoring" }
+# The facade, and only for the things that need a window: the demo example, the
+# injection test, and the second column of the benchmark. `default-features =
+# false` keeps the platform stack out of a plain `cargo build`; `demo`,
+# `test-support` and `bench` turn it back on, which is all the facade's own
+# `default` feature does.
+gpui = { version = "1.21", package = "bite-gpui", default-features = false, optional = true }
+
+[features]
+demo = ["dep:gpui", "gpui/platform"]
+test-support = ["dep:gpui", "gpui/platform", "gpui/test-support"]
+
+[dev-dependencies]
+# The first column: the facade's own shipped decorators, `ThrottledPipeline` and
+# `InstrumentedPipeline` (package `bite-gp-runtime`, lib `gpui_runtime`). Two
+# implementations of one trait through the same call, which is what makes a
+# number a property of the architecture rather than of one library.
+gpui_runtime = { version = "1.21", package = "bite-gp-runtime" }
+# `WindowMetrics` is a plain value with public fields, but they are geometry
+# types. A test and a benchmark both build one to hand a pipeline, and neither
+# needs a window to do it — which is what makes the decision itself measurable
+# without a display.
+gpui_types = { version = "1.21", package = "bite-gp-types" }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# No feature of its own: the decision is measured through `WindowMetrics`, which is a
+# plain value, so the benchmark needs no platform and no display — only the trait and
+# the metrics, which are two light dependencies.
+[[bench]]
+name = "frame_pipeline"
+harness = false
+
+[[example]]
+name = "pass_demo"
+required-features = ["demo"]
+
+# The second half of the facade question: `tests/throttling.rs` measures the decision
+# against a clock it owns, and this draws a frame through `set_frame_pipeline_factory`
+# to check the window can use the pipeline at all — and that the passes it times are
+# the passes the engine calls. It needs the facade's test harness, so it is gated like
+# the example rather than run by a plain `cargo test`.
+[[test]]
+name = "facade"
+required-features = ["test-support"]
