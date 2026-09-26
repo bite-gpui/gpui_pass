@@ -58,6 +58,12 @@ path = "src/gpui_pass.rs"
 # `WindowMetrics` a frame is throttled against. This is the whole surface the
 # pipeline needs; it names no window, no platform and no renderer.
 gpui_authoring = { version = "1.21", package = "bite-gp-authoring" }
+# The out-of-process timeline, behind the `puffin` feature: a scope per pass and a frame
+# boundary between frames, read by `puffin_viewer` (over `puffin_http`) or in-game by
+# `puffin_egui`. It is pure Rust and — the part that matters here — in-process, so a test
+# can turn scopes on and read the frames back. A C++ profiler client could promise the
+# timeline but not that, which is why this crate carries puffin rather than tracy.
+puffin = { version = "0.20", optional = true }
 # The facade, and only for the things that need a window: the demo example, the
 # injection test, and the second column of the benchmark. `default-features =
 # false` keeps the platform stack out of a plain `cargo build`; `demo`,
@@ -68,6 +74,9 @@ gpui = { version = "1.21", package = "bite-gpui", default-features = false, opti
 [features]
 demo = ["dep:gpui", "gpui/platform"]
 test-support = ["dep:gpui", "gpui/platform", "gpui/test-support"]
+# Telemetry, and off by default: the ledger accounts for a window without it, and a
+# consumer that does not want a profiler should not link one.
+puffin = ["dep:puffin"]
 
 [dev-dependencies]
 # The first column: the facade's own shipped decorators, `ThrottledPipeline` and
@@ -92,6 +101,31 @@ harness = false
 [[example]]
 name = "pass_demo"
 required-features = ["demo"]
+
+# Two windows: one whose scene is dialled by knobs, one that draws what each pass of it cost.
+# Windowed, so it needs the platform. See `examples/pass_lab.rs`.
+[[example]]
+name = "pass_lab"
+required-features = ["demo"]
+
+# The ticket without a display: `TestAppContext` drives the frame loop headlessly, so
+# this runs where the demo cannot.
+[[example]]
+name = "pass_ticket"
+required-features = ["test-support"]
+
+# The scopes a real window would emit, driven headlessly and read back in-process.
+# It needs the facade to draw a frame through, so it is gated like the other facade
+# tests rather than run by a plain `cargo test`. See `tests/puffin.rs`.
+[[test]]
+name = "puffin"
+required-features = ["puffin", "test-support"]
+
+# The scopes printed as a waterfall, with no display — the `PuffinPipeline` counterpart to
+# `pass_ticket`. See `examples/puffin_scopes.rs`.
+[[example]]
+name = "puffin_scopes"
+required-features = ["puffin", "test-support"]
 
 # The second half of the facade question: `tests/throttling.rs` measures the decision
 # against a clock it owns, and this draws a frame through `set_frame_pipeline_factory`

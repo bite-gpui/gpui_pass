@@ -101,16 +101,59 @@ substance:
   `WindowMetrics` carries no refresh rate — so what emerges is the right *rate*
   landing on the display's grid, never a lock to the raster. Where a rigid cadence
   matters, count refreshes in the platform.
-- **Not a profiler.** It sees the passes and nothing between them — not a syscall,
-  not a GPU wait, not which view was slow. What it sees, it sees in-process: no C++
-  toolchain, no external GUI to attach. Less reach than Tracy, and exercisable
-  without one.
+- **Not a timeline.** The ledger keeps a summary — what each pass cost, how many asks
+  the throttle passed over, where the recent frames sit against the budget — and nothing
+  *between* the passes: not a syscall, not a GPU wait, not which view was slow. A scope
+  per pass on a flamegraph is the other shape a measurement takes, and it is a separate
+  decorator behind the `puffin` feature (below).
 - **Not a general frame-rate cap only.** A cap that compares against the last frame
   cannot express a rate the refresh period does not divide; a carried schedule can,
   because the remainder shorter than an interval is kept rather than rounded. 24 fps
   on a 60 Hz grid comes out as the 3:2 pulldown: **121 frames in five seconds**,
   where the from-last rule lands on 150 (30 fps) or 100 (20 fps) — neither of which
   is 24.
+
+## The `puffin` feature (a timeline, off by default)
+
+The ledger summarises. A timeline is the other shape a measurement takes, and it is
+`PuffinPipeline`, behind the `puffin` feature: a decorator that emits one
+[puffin](https://github.com/EmbarkStudios/puffin) scope for every pass it forwards —
+`gpui::begin_frame`, `gpui::evaluate_roots`, `gpui::layout_roots`, `gpui::paint_roots`,
+and the three that close the frame out — and opens a frame boundary at the top of each
+frame. Wrap whatever pipeline you already have:
+
+```rust
+use gpui_pass::PuffinPipeline;
+
+let pipeline = PuffinPipeline::new(
+    StandardImmediatePipeline.pass(policy, ledger.clone()),
+);
+```
+
+It composes the way any decorator does: a scope measures whatever it encloses, so wrap
+the pass in the emitter to see the throttle's frames on the timeline, and stack the two
+in either order. `should_render` is deliberately left unscoped — it is asked once per
+*ask*, not once per drawn frame, and a scope around it would report a per-ask duration as
+if it were part of a frame.
+
+What the scopes measure is the **passes**. The GPU submit, the swap and the vblank are
+below the seam — `SceneRenderer` is reached only through the platform window — so a scope
+is a pass's CPU cost, never a frame time. A 60 fps frame is 16.67 ms; the passes fill a
+slice of it and the platform presents the rest. `examples/puffin_scopes.rs` prints exactly
+that, labelled.
+
+Two things made puffin the choice over a C++ profiler client, and the second is the
+load-bearing one. It is pure Rust, so a consumer links nothing it was not already
+building — no C++ toolchain dragged into every build. And it records scopes
+**in-process**, so a test can turn them on, drive real frames through the pipeline, and
+read the frames back: `tests/puffin.rs` does exactly that and asserts one scope per pass.
+A profiler whose data exists only inside an external GUI cannot be checked in CI, and
+neither could the crate that would have carried one.
+
+Emitting the scopes is this crate's half. Getting them to a viewer is the caller's:
+`puffin_http` serves them over TCP for `puffin_viewer`, or `puffin_egui` draws them
+inside the application. The sink is whatever `puffin::GlobalProfiler::lock().add_sink`
+was handed, and this crate depends on none of them.
 
 ## Examples and tests
 
@@ -119,9 +162,13 @@ cargo test                                    # the ledger's arithmetic, and the
 cargo test --test ledger                      # deferrals and the budget, no window needed
 cargo test --test throttling                  # the admission rule, on a clock the test owns
 cargo test --features test-support --test facade   # ...and that the engine can drive it
+cargo test --features puffin,test-support --test puffin  # one scope per pass, read back headlessly
 
-cargo run --example pass_demo --features demo  # a window; `-- naive` for the shipped cap
-cargo run --release --example pass_cost        # what each throttle costs per decision
+cargo run --example pass_demo --features demo        # a window; `-- naive` for the shipped cap
+cargo run --example pass_lab --features demo         # two windows: a scene you dial, and its pass costs
+cargo run --example pass_ticket --features test-support  # the ledger as a ticket, headless
+cargo run --example puffin_scopes --features puffin,test-support  # one scope per pass, printed headlessly
+cargo run --release --example pass_cost              # what each throttle costs per decision
 ```
 
 `test-support` pulls in the facade and moves gpui's frame drawing onto its test path,
@@ -156,6 +203,31 @@ The distribution's scheme, `major.minor.(patch * 100 + amendment)`, puts `1.21.1
 
 **It is not on crates.io yet.** The manifest above is the line it will take, not one
 that resolves today.
+
+## Publishing
+
+One dispatch does the whole release — the bump, the tag and the upload — from
+`.github/workflows/release.yml`. Nothing is written to the repository until the
+publishing job runs, and that job sits behind the `crates-io` environment, so a dispatch
+does not touch the branch or the registry on its own.
+
+```sh
+# what would be released, without releasing it (dry_run defaults to true)
+gh workflow run release.yml -f bump=amendment
+
+# the release: repeat the tag the run logged to confirm it
+git pull && gh workflow run release.yml -f bump=amendment -f dry_run=false -f confirm=v1.21.4
+```
+
+`bump` is one of `amendment`, `patch`, `minor` or `none`. The first three move the slot
+they name and refuse a version that is already tagged; `none` re-releases the version the
+manifest already carries, which is the recovery for an upload that failed after the tag
+was pushed.
+
+**The environment has no required reviewers configured yet**, so `dry_run=false` goes
+straight to the upload — see `gpui_parley`'s README for what that gate is meant to be.
+And a token for this crate has to be scoped to a name prefix that covers `bite-gp-pass`:
+`bite_*` does not, because of the hyphen.
 
 ## Licence
 

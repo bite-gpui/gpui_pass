@@ -51,7 +51,7 @@ use gpui::{
     StandardImmediatePipeline, Window, WindowBounds, WindowMetrics, WindowOptions, application,
     div, prelude::*, px, rgb, size,
 };
-use gpui_pass::{Ledger, PassPipeline, RatePolicy};
+use gpui_pass::{Ledger, PassPipeline, Phase, RatePolicy};
 use gpui_runtime::ThrottledPipeline;
 
 /// The rate both throttles are asked for. 24 does not divide 60, which is the whole
@@ -72,6 +72,11 @@ const GRAPH_MAX_MS: f32 = 100.0;
 /// is well clear of the 50ms a 3:2 hold reaches, so the pulldown is never mistaken for
 /// a stall.
 const STALL_MS: f32 = 70.0;
+
+/// The display the demo is written against. A refresh of it, and the two holds a 3:2
+/// pulldown alternates between, are derived from this rather than spelled out repeatedly.
+const REFRESH_HZ: f32 = 60.0;
+const REFRESH_MS: f32 = 1000.0 / REFRESH_HZ;
 
 const GRAPH_HEIGHT: f32 = 120.0;
 
@@ -202,35 +207,49 @@ impl Pacer {
         }
     }
 
-    fn title(self) -> &'static str {
+    /// The tier and the claim, above the headline.
+    fn badge(self) -> &'static str {
         match self {
-            Pacer::Throttle => "PassPipeline — a carried schedule",
-            Pacer::Naive => "ThrottledPipeline — the shipped cap",
+            Pacer::Throttle => "WRAP · FRACTIONAL CADENCE PACING",
+            Pacer::Naive => "WRAP · WHOLE-INTERVAL CADENCE",
         }
     }
 
+    fn title(self) -> &'static str {
+        match self {
+            Pacer::Throttle => "PassPipeline: The Carried Schedule",
+            Pacer::Naive => "ThrottledPipeline: The Memoryless Cap",
+        }
+    }
+
+    /// The problem both runs are a demonstration of.
     fn rule(self) -> &'static str {
         match self {
             Pacer::Throttle => {
-                "asked for 24 fps. The rate is a policy, and one interval of slack lets the 2.5 \
-                 refreshes a frame takes come out as holds of three and two."
+                "24 fps on a 60 Hz display is 2.5 refreshes a frame. A memoryless limiter can \
+                 hold whole intervals and nothing else — 30 fps or 20 — where a carried \
+                 schedule accumulates the remainder and lands on the 3:2 pulldown."
             }
             Pacer::Naive => {
-                "asked for 24 fps. The rule is `now - last >= 3/4 of the interval`, and it \
-                 remembers only the last frame."
+                "24 fps on a 60 Hz display is 2.5 refreshes a frame. This rule is \
+                 `now - last >= 3/4 of the interval` and remembers only the last frame, so it \
+                 cannot hold the half: its tolerance rounds the cadence to two refreshes and \
+                 it runs a quarter fast."
             }
         }
     }
 
-    fn hint(self) -> &'static str {
+    /// The callout under the phase-lock track.
+    fn callout(self) -> &'static str {
         match self {
             Pacer::Throttle => {
-                "The bright cell is where the frames actually drawn put the animation; the dim \
-                 one is where wall-clock time does. They stay together."
+                "Locked in phase. The bright cell is where the frames actually drawn put the \
+                 animation and the dim one is where wall-clock time does — the fractional \
+                 remainder is carried, so the two never drift apart."
             }
             Pacer::Naive => {
-                "The bright cell runs ahead of the dim one, and keeps going: 30 frames a second \
-                 is what this rule delivers when 24 was asked for."
+                "Out of phase. The bright cell runs ahead of the dim one and keeps going: 30 \
+                 frames a second is what this rule delivers when 24 was asked for."
             }
         }
     }
@@ -257,19 +276,21 @@ impl Render for Demo {
             )
         };
 
-        let ledger_line = {
+        // Everything the ledger has to say, read once, between frames.
+        let (drawn, deferred, shed, paint_ms) = {
             let ledger = self.ledger.borrow();
-            let last = ledger
+            let paint_ms = ledger
                 .last()
-                .map(|frame| format!("{:.3} ms", frame.total().as_secs_f64() * 1000.0))
-                .unwrap_or_else(|| "—".to_string());
-            format!(
-                "Ledger: {} drawn, {} asks passed over ({:.0}%), last frame {last}",
+                .map(|frame| frame.phase(Phase::Paint).as_secs_f64() * 1000.0)
+                .unwrap_or(0.0);
+            (
                 ledger.drawn(),
                 ledger.deferred(),
                 ledger.deferral_ratio() * 100.0,
+                paint_ms,
             )
         };
+        let locked = (fps_now - RATE as f32).abs() < 0.5;
 
         // Where the two independent clocks are. `clock_steps` is what a perfect 24 fps
         // would have drawn by now, so the difference is how far this throttle has run
@@ -295,7 +316,14 @@ impl Render for Demo {
                     .gap_1()
                     .child(
                         div()
-                            .text_size(px(19.))
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(ACCENT))
+                            .child(self.pacer.badge()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(21.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(TEXT))
                             .child(self.pacer.title()),
@@ -314,18 +342,34 @@ impl Render for Demo {
                     .gap_3()
                     .child(stat_card(
                         format!("{fps_now:.1}"),
-                        "frames a sec",
+                        "Cadence (FPS)",
+                        if locked {
+                            "locked to target".to_string()
+                        } else {
+                            format!("target {RATE} fps")
+                        },
                         rgb(ACCENT),
                     ))
                     .child(stat_card(
-                        format!("{latest_ms:.1}"),
-                        "last frame ms",
+                        format!("{latest_ms:.1} ms"),
+                        "Last Frame Interval",
+                        format!(
+                            "the 3:2 cycle: {:.1} / {:.1} ms",
+                            REFRESH_MS * 2.0,
+                            REFRESH_MS * 3.0
+                        ),
                         rgb(GOOD),
                     ))
-                    .child(stat_card(frames.to_string(), "frames drawn", rgb(VIOLET)))
+                    .child(stat_card(
+                        frames.to_string(),
+                        "Frames Rendered",
+                        format!("{deferred} redraws deferred ({shed:.0}% shed)"),
+                        rgb(VIOLET),
+                    ))
                     .child(stat_card(
                         format!("{ahead:+}"),
-                        "ahead of the clock",
+                        "Phase Lead (frames)",
+                        "carried, so it never drifts".to_string(),
                         if ahead.abs() <= 2 {
                             rgb(GOOD)
                         } else {
@@ -338,52 +382,104 @@ impl Render for Demo {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child(
-                        "Two seconds at the rate asked for — bright: one step per drawn \
-                                 frame, dim: one step per 1/24s of wall clock",
-                    ))
-                    .child(step_strip(frames, clock_steps)),
+                    .child(section_title(format!(
+                        "Phase Lock: wall clock vs. rendered state ({LAP_CELLS}-frame window)"
+                    )))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_4()
+                            .child(legend(MUTED, "dim — where an ideal 24 fps clock is"))
+                            .child(legend(ACCENT, "bright — the frame on screen now")),
+                    )
+                    .child(step_strip(frames, clock_steps))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(GOOD))
+                            .child(self.pacer.callout()),
+                    ),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
+                    .child(section_title(
+                        "Frame Intervals & 3:2 Alternation (newest → right)",
+                    ))
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .flex()
+                            .flex_row()
+                            .gap_4()
+                            .child(legend(
+                                ACCENT,
+                                format!(
+                                    "3:2 stems — {:.1} / {:.1} ms, alternating",
+                                    REFRESH_MS * 2.0,
+                                    REFRESH_MS * 3.0
+                                ),
+                            ))
+                            .child(legend(WARN, format!("over {STALL_MS:.0} ms — a stall"))),
+                    )
+                    .child(graph(&intervals, target_height))
+                    .child(
+                        div()
+                            .text_size(px(10.))
                             .text_color(rgb(MUTED))
                             .child(format!(
-                                "Frame intervals, newest right — the line is the {target_ms:.1}ms \
-                                 of the {RATE} fps asked for; amber is a frame over {STALL_MS:.0}ms"
+                                "-- {target_ms:.1} ms target ({RATE} fps average) --"
                             )),
-                    )
-                    .child(graph(&intervals, target_height)),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(GOOD))
-                    .child(self.pacer.hint()),
+                    ),
             )
             .child(
                 div()
                     .text_size(px(11.))
                     .text_color(rgb(MUTED))
-                    .child(ledger_line),
+                    .child(format!(
+                        "LEDGER: {drawn} drawn · {deferred} redraws deferred ({shed:.0}% of asks \
+                         shed) · last frame paint {paint_ms:.2} ms"
+                    )),
             )
-            .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child(
-                "24 fps on a 60Hz grid is 2.5 refreshes a frame, which a rule that \
-                         remembers only the previous frame cannot express: it locks to two \
-                         refreshes (30 fps) or three (20). A carried schedule keeps the \
-                         half-refresh across frames, so the cadence it lands on is the 3:2 \
-                         pulldown. Neither throttle chooses when a frame is presented, only \
-                         whether an ask does the frame's work.",
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(explainer(
+                        "The 2.5-refresh problem",
+                        "24 fps on a 60 Hz display is 2.5 refreshes a frame — 41.7 ms, and not a \
+                         whole number of anything. A limiter that compares only against \
+                         `last_frame` cannot express the half, so it collapses onto two \
+                         refreshes (30 fps) or three (20 fps).",
+                    ))
+                    .child(explainer(
+                        "The carried accumulator",
+                        "The schedule keeps the remainder. A frame that holds two refreshes \
+                         (33.3 ms) passes half of one to the next, which holds three (50.0 ms); \
+                         the alternation repeats as the 3:2 pulldown, and the average is exactly \
+                         24 fps.",
+                    ))
+                    .child(explainer(
+                        "Selective dispatch",
+                        "Neither run chooses when the display presents — it cannot from here. \
+                         What it chooses is whether the application spends cycles preparing a \
+                         frame. Skipping the asks the rate does not need leaves the thread idle \
+                         instead of drawing frames nobody sees.",
+                    )),
+            )
     }
 }
 
-fn stat_card(value: String, label: &'static str, color: impl Into<Hsla>) -> impl IntoElement {
+/// A number, what it is, and how to read it.
+fn stat_card(
+    value: String,
+    label: &'static str,
+    subtext: String,
+    color: impl Into<Hsla>,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -399,7 +495,54 @@ fn stat_card(value: String, label: &'static str, color: impl Into<Hsla>) -> impl
                 .text_color(color)
                 .child(value),
         )
-        .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child(label))
+        .child(div().text_size(px(11.)).text_color(rgb(TEXT)).child(label))
+        .child(
+            div()
+                .text_size(px(10.))
+                .text_color(rgb(MUTED))
+                .child(subtext),
+        )
+}
+
+/// A bold line above a visualizer.
+fn section_title(text: impl Into<String>) -> impl IntoElement {
+    div()
+        .text_size(px(11.))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(TEXT))
+        .child(text.into())
+}
+
+/// A swatch and what it stands for, for a track or a graph.
+fn legend(swatch: u32, text: impl Into<String>) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child(div().w(px(9.)).h(px(9.)).rounded_full().bg(rgb(swatch)))
+        .child(
+            div()
+                .text_size(px(10.))
+                .text_color(rgb(MUTED))
+                .child(text.into()),
+        )
+}
+
+/// A claim and the reason for it, under the visualizers.
+fn explainer(lead: &'static str, body: &'static str) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_size(px(12.))
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(TEXT))
+                .child(lead),
+        )
+        .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child(body))
 }
 
 /// The two clocks side by side, as one cell lit per step.
@@ -504,7 +647,7 @@ fn run_demo(pacer: Pacer) {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
-                        size(px(660.), px(600.)),
+                        size(px(720.), px(860.)),
                         cx,
                     ))),
                     // The engine caps an unfocused window at 30 fps in the frame source,

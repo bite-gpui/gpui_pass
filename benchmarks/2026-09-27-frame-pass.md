@@ -18,6 +18,11 @@ cargo bench --bench frame_pipeline
 cargo test --test throttling -- --nocapture
 cargo test --test ledger
 cargo test --features test-support --test facade -- --nocapture
+cargo test --features puffin,test-support --test puffin -- --nocapture
+cargo run --example puffin_scopes --features puffin,test-support
+
+# the windowed examples need a display to run, but compile without one
+cargo check --examples --features demo
 ```
 
 | | |
@@ -79,6 +84,37 @@ One outlier in each of the second and third groups (1 of 100). So the pass costs
 the policy per frame, which is what lets one install pace two windows differently, is
 inside the noise of not reading it at all.
 
+## The scope emitter
+
+A summary is one shape a measurement takes; a timeline is the other. `PuffinPipeline`
+(behind the `puffin` feature, off by default) is a decorator that emits one
+[puffin](https://github.com/EmbarkStudios/puffin) scope per pass it forwards and opens a
+frame boundary at the top of each frame, so the same passes that fill the ledger can be
+dragged across in a viewer. It is pure Rust, so no consumer gains a C++ toolchain, and
+its scopes are recorded in-process — which is the property that makes it testable.
+
+That is what `tests/puffin.rs` does and why it is a test at all. It turns scopes on,
+drives real frames through the facade, and reads the frames back through
+`puffin::GlobalFrameView`: the count per frame is asserted **exactly**, seven — one scope
+per pass of `FramePipeline::draw` — with the decision deliberately unscoped, so a
+forgotten pass and an extra scope each fail the count. A frame is only readable once
+another has begun, which is puffin's boundary semantics, not this crate's.
+
+`examples/puffin_scopes.rs` is the same data the other way round: still no display, but
+it prints each frame's scopes with their spans rather than counting them — the waterfall a
+viewer draws, read back in-process. Both are runnable here, which is the point.
+
+The spans are the **passes** — on a dev build, over a view small enough to run in a test —
+and never a frame time. A 60 fps frame is 16.67 ms; the passes fill a slice of it, and the
+GPU submit and the swap that fill the rest live below the seam, where a pipeline cannot see
+them. That boundary is the same one `budget()` is careful about, and the same one that makes
+the crate a wrap rather than a pacer.
+
+The number here is a count, not a duration. A scope's cost is puffin's to characterise
+(and is a relaxed atomic load when the profiler is off, which is the default), and a test
+fast enough to assert a scope's *duration* is a test that cannot see the frames — so this
+file asserts structure and leaves timing to the profiler.
+
 ## What it says
 
 **The rate is the right rate, not a quantised one.** A rate the refresh period does
@@ -108,10 +144,19 @@ free, and it is not the thing to optimise before the rate is right.
 - `src/policy.rs` — `Rate`, `RatePolicy`: a sustained rate and a burst allowance.
 - `src/ledger.rs` — `Phase`, `FrameCost`, `Ledger`: the ring, the deferrals, the
   percentiles and the budget.
+- `src/puffin_pipeline.rs` — `PuffinPipeline`: a scope per pass and a frame boundary
+  between frames, behind the `puffin` feature.
 - `tests/throttling.rs` — what each rule does to a stream of asks, on a clock the test
   owns.
 - `tests/ledger.rs` — deferrals and the budget, with no window.
 - `tests/facade.rs` — the engine drives it: frames drawn, passes timed.
+- `tests/puffin.rs` — a scope per pass, read back in-process with the profiler on.
 - `examples/pass_demo.rs` — a window, the rate, and the ledger live.
+- `examples/pass_lab.rs` — two windows: one whose scene is dialled by knobs, one that draws what
+  each pass of it cost. Needs a display to run.
+- `examples/pass_ticket.rs` — the ledger as a ticket, driven through the engine's own
+  frame loop headlessly, so it runs where the windowed demo cannot.
+- `examples/puffin_scopes.rs` — the scopes as a waterfall, headless, behind the `puffin`
+  feature: the same frames `tests/puffin.rs` counts, printed with their spans.
 - `examples/pass_cost.rs` — the dense-stream comparison above.
 - `benches/frame_pipeline.rs` — the criterion timings above.

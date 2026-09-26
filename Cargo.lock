@@ -921,6 +921,7 @@ dependencies = [
  "bite-gp-types",
  "bite-gpui",
  "criterion",
+ "puffin",
 ]
 
 [[package]]
@@ -4553,6 +4554,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "puffin"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84b514d95a258be801fde8a1ff1c974f4a4841d9750f5d1d6690fc07a5ad4049"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "cfg-if",
+ "itertools 0.14.0",
+ "parking_lot",
 ]
 
 [[package]]

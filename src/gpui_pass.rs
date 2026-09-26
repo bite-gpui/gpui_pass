@@ -50,10 +50,23 @@
 //! than the rate, the tool is the platform's: count refreshes and draw every
 //! `round(refresh / target)`th.
 //!
-//! Nor is the ledger a profiler. It sees the passes and nothing between them —
-//! not a syscall, not a GPU wait, not which view was slow. What it sees, it sees
-//! in-process, without a C++ toolchain and without a GUI to attach, which is the
-//! trade: less reach than Tracy, and exercisable in CI.
+//! Nor is the ledger a profiler. It keeps a summary, not a timeline: a scope per
+//! pass, with a bar to drag a cursor across, is the other shape a measurement
+//! takes, and it is [`PuffinPipeline`]'s — behind the `puffin` feature. The two
+//! are complementary and compose: wrap the pass in the scope emitter to see a
+//! frame's passes on puffin's timeline, or leave it off and the ledger accounts
+//! for a window with no profiler linked at all.
+//!
+//! # The `puffin` feature
+//!
+//! Off by default. Turning it on adds [`PuffinPipeline`], a decorator that emits
+//! a puffin scope for each pass it forwards and a frame boundary between frames.
+//! The scopes are recorded in-process, so a test can turn them on, drive real
+//! frames through the pipeline, and read the frames back — see `tests/puffin.rs`.
+//! Getting them to a viewer is the caller's half: `puffin_http` serves them over
+//! TCP for `puffin_viewer`, or `puffin_egui` draws them in-game; the sink is
+//! whatever `puffin::GlobalProfiler::lock().add_sink` was handed. This crate
+//! depends on none of those.
 //!
 //! ```
 //! use core::num::NonZeroU32;
@@ -73,9 +86,13 @@
 
 mod ledger;
 mod policy;
+#[cfg(feature = "puffin")]
+mod puffin_pipeline;
 
 pub use ledger::{FrameCost, Ledger, Phase};
 pub use policy::RatePolicy;
+#[cfg(feature = "puffin")]
+pub use puffin_pipeline::PuffinPipeline;
 
 use std::{
     cell::{Cell, RefCell},
