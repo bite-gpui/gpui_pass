@@ -22,13 +22,19 @@
 # 1.21, so `1.21.1` is `bite-gp-parley`, `1.21.2` is `bite-gp-morphorm`, and this
 # crate takes `1.21.3`.
 #
+# The manifest carries the *base* the release workflow bumps from, not the release:
+# `1.21.2` here, and one `amendment` bump lands on `1.21.3`. Nothing is ever
+# published at the base — the workflow computes, writes, tags and uploads the
+# bumped version in one dispatch, so the version in this file is the one
+# *already* released once a release has run.
+#
 # `package.name` and `[lib] name` differ, which is invariant 2 of the
 # distribution: the package identifier carries the namespace, the library target
 # keeps the name the code uses, and `use gpui_pass::…` in a consumer is unaffected
 # by either.
 [package]
 name = "bite-gp-pass"
-version = "1.21.3"
+version = "1.21.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "A throttling, self-accounting FramePipeline for GPUI"
