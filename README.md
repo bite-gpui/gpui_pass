@@ -201,8 +201,10 @@ The distribution's scheme, `major.minor.(patch * 100 + amendment)`, puts `1.21.1
 `bite-gp-parley` and `1.21.2` at `bite-gp-morphorm`; this crate holds the next slot,
 `1.21.3`.
 
-**It is not on crates.io yet.** The manifest above is the line it will take, not one
-that resolves today.
+**On crates.io as `1.21.3`.** The manifest carries the last released version, and the
+release workflow bumps *from* it: `1.21.3` now, one `amendment` away from `1.21.4`. A
+first release needs the base rather than the target, which is why the manifest read
+`1.21.2` until the release commit wrote `1.21.3`.
 
 ## Publishing
 
