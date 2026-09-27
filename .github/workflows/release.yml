@@ -28,9 +28,9 @@
 #     but `bite-gp-pass`'s version moved (`scripts/release.py check-lock`): a dependency
 #     that floated between two releases is a change to look at, not one for a release to
 #     make quietly.
-#   * **a dry run needs no approval, no token and no write.** The packaging job is read
-#     only, so iterating on the inputs costs nothing and cannot push; the commit, the tag
-#     and the push all live in the publishing job, which is the one behind the
+#   * **a dry run needs no approval and no token.** The packaging job writes only its own
+#     checkout and never pushes, so iterating on the inputs costs nothing; the commit, the
+#     tag and the push all live in the publishing job, which is the one behind the
 #     environment.
 #   * **the arithmetic is one file.** `scripts/release.py` holds it, both jobs call it,
 #     and the publishing job asserts that the version it computed matches the one the
@@ -186,8 +186,14 @@ jobs:
       # the crate built as the root of its own build. A manifest the registry would
       # reject, or a file the crate reads that is not in the package, is found here
       # rather than mid-publish.
+      #
+      # `--allow-dirty` is load-bearing. The bump above wrote the manifest and the lock, and
+      # nothing commits them until the publishing job, so the clean-tree check would refuse
+      # here — for a dry run and for a real release alike, a failure with nothing to do with
+      # the crate. Packaging the working tree is exactly what is wanted: it is the tree the
+      # publishing job will commit and upload.
       - name: Package
-        run: cargo publish --dry-run --locked
+        run: cargo publish --dry-run --locked --allow-dirty
 
       - name: Summarise
         env:
