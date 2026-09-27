@@ -34,7 +34,7 @@
 # by either.
 [package]
 name = "bite-gp-pass"
-version = "1.21.2"
+version = "1.21.3"
 edition = "2024"
 license = "Apache-2.0"
 description = "A throttling, self-accounting FramePipeline for GPUI"
