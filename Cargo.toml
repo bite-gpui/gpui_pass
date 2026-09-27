@@ -39,6 +39,7 @@ edition = "2024"
 license = "Apache-2.0"
 description = "A throttling, self-accounting FramePipeline for GPUI"
 repository = "https://github.com/bite-gpui/gpui_pass"
+homepage = "https://bite-gpui.github.io/"
 readme = "README.md"
 keywords = ["gui", "frame-rate", "throttling", "profiling"]
 categories = ["gui"]
